@@ -1,4 +1,4 @@
-#include "bvec/bvec32.h"
+#include "bvec/bvec.h"
 #include "test.h"
 #include <algorithm>
 
@@ -10,6 +10,8 @@ const uint32_t TEST_CASES[][TEST_VEC_LENGTH] = {
     { 1819233732, 2235579467, 2625766209, 4061912144 }
 };
 
+using namespace std;
+
 int run_test_cases() {
     int num_cases = sizeof(TEST_CASES) / (TEST_VEC_LENGTH * sizeof(uint32_t));
     int retValue = 0;
@@ -17,7 +19,7 @@ int run_test_cases() {
         vector<uint32_t> v;
         for (int j = 0; j < TEST_VEC_LENGTH; j++)
             v.push_back(TEST_CASES[i][j]);
-        bvec32 *bv = new bvec32(v);
+        bvec *bv = new bvec(v);
         bv->compress();
         bv->decompress();
         vector<uint32_t> uncomp = bv->get_words();
@@ -39,7 +41,6 @@ int run_test_cases() {
     return retValue;
 }
 
-using namespace std;
 int main(int argc, char *argv[]) {
     return run_test_cases();
 }

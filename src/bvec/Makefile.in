@@ -66,7 +66,7 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libbvec_la_LIBADD =
-am_libbvec_la_OBJECTS = bvec32.lo
+am_libbvec_la_OBJECTS = bvec.lo bvec32.lo
 libbvec_la_OBJECTS = $(am_libbvec_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -273,7 +273,7 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 noinst_LTLIBRARIES = libbvec.la
-libbvec_la_SOURCES = bvec32.cpp bvec32.h kseq.h
+libbvec_la_SOURCES = bvec.cpp bvec32.cpp bvec32.h kseq.h
 AM_DEFAULT_SOURCE_EXT = .cpp
 @MACOS_TRUE@suff = -mt
 LDADD = -lboost_serialization$(suff)
@@ -331,6 +331,7 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/bvec.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/bvec32.Plo@am__quote@
 
 .cpp.o:

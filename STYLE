@@ -1,0 +1,22 @@
+PROGRAMMING STYLE GUIDE
+=======================
+
+Autoconf Files
+--------------
+(configure.ac, Makefile.am, etc.)
+
+* Indented with hard tabs (autotools fussy about spaces)
+
+Source Files
+------------
+(*.cpp, *.h)
+
+* Indented with soft tabs (spaces-only)
+* Class names are lower-spaced
+* Method names are CamelCase'd
+* No implementation in header files unless super-simple
+
+Tests
+-----
+* API tests are written as C++ source files
+* Program tests are written in Bash Shell

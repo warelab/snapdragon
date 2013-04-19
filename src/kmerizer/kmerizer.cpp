@@ -863,7 +863,7 @@ void kmerizer::range_index(vector<uint32_t> &vec, vector<uint32_t> &values, vect
 		index[i] = new bvec32(vrange[i]);
 }
 
-// need an iterator that works with a bvec32 mask bvec32->nextOne(); - returns position of set bit
+// need an iterator that works with a bvec32 mask bvec32->next_one(); - returns position of set bit
 // or number of bits (invalid response)
 
 // We can do this in parallel if we figure out in advance the offset within the output file for each bin.

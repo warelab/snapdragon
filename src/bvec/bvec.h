@@ -1,75 +1,94 @@
-#ifndef BVEC_H
-#define BVEC_H
+#ifndef SNAPDRAGON_BVEC_H
+#define SNAPDRAGON_BVEC_H
 
-#define WORD_SIZE            32
-#define LITERAL_SIZE         31
-#define BIT32        2147483648
-#define BIT31        1073741824
-#define FILLMASK     1073741823
-#define ALL1S        2147483647
-#define ONEFILL      3221225472
-#define ONEFILL1     3221225473
-#define ONEFILL2     4294967295
+#define DEBUG false
 
+#include <iostream>
+#include <fstream>
 #include <algorithm>
 #include <vector>
+#include <cstring>
 #include <boost/serialization/vector.hpp>
+#include <boost/cstdint.hpp>
+
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/archive/text_oarchive.hpp>
+
 using namespace std;
 
-class bvec
-{
-	friend class boost::serialization::access;
+typedef uint32_t word_t;
 
-	template<class Archive>
-	void serialize(Archive & ar, const unsigned int version) {
-		ar & words;
-	}
-	
+class bvec {
+    vector<word_t> words;
+    bool rle;
+    word_t count; // cache the number of set bits
+    word_t size; // bits in the uncompressed bitvector
+    
+    friend class boost::serialization::access;
+    friend ostream & operator <<(ostream &, const bvec &);
+
+    template<class Archive>
+    void serialize(Archive & ar, const unsigned int version) {
+        ar & words & count & size & rle;
+    }
+    
 public:
-	// Destructor
-	~bvec() {};
+    // Destructor
+    ~bvec() {};
 
-	// Constructors
-	bvec() {};
-	bvec(vector<uint32_t>& vals);
-	bvec(vector<uint64_t>& vals);
+    // Constructors
+    bvec() : rle(false), count(0), size(0) {};
+    bvec(bool wah) : rle(false), count(0), size(0) {compress();};
+    bvec(vector<word_t>& vals);
+    bvec(word_t* buf); // DIY deserialization
+    void print();
+    void compress();
+    void decompress();
+    size_t dump(word_t **buf); // DIY serialization
 
-	inline bvec& copy(const bvec& bv);
-	void matchSize(bvec& bv);
+    // logical set operations
+    void flip();
+    bvec* copyflip();
+    void operator|=(bvec& rhs);
+    bvec* operator|(bvec&);
+    void operator&=(bvec& rhs);
+    bvec* operator&(bvec&);
+    bool operator==(bvec&) const;
+    
+    bool equals(const bvec&) const;
+    vector<word_t>& get_words();
 
-	// logical set operations
-	void operator|=(bvec& rhs);
-	bvec* operator|(bvec&);
-	void operator&=(bvec& rhs);
-	bvec* operator&(bvec&);
+    // is x in the set?
+    bool find(word_t x);
+    // find the position of the next set bit after x
+    word_t next_one(word_t x);
+    
+    // insert x into an existing bvec (at the end is faster)
+    void setBit(word_t x);
+    // for constructing a rle bvec one bit at a time
+    void appendFill(bool bit, word_t cnt);
 
-	// is x in the set?
-	bool find(uint64_t x);
-
-	// basic metrics
-	inline uint64_t cnt();
-	inline uint32_t bytes() { return 4*words.size(); }
+    // basic metrics
+    inline word_t cnt();
+    inline word_t get_size();
+    inline word_t bytes();
 
 private:
-	vector<uint32_t> words;
-	uint64_t count; // cache the number of set bits
-	uint64_t size; // bits in the uncompressed bitvector
+
+    bool low_density(vector<word_t>& vals);
+    void construct_rle(vector<word_t>& vals);
+    inline bvec& copy(const bvec& bv);
+    void matchSize(bvec& bv);
+    void rle_OR_rle(bvec& rhs);
+    void rle_OR_non(bvec& rhs);
+    void non_OR_rle(bvec& rhs);
+    void non_OR_non(bvec& rhs);
+    void rle_AND_rle(bvec& rhs);
+    void rle_AND_non(bvec& rhs);
+    void non_AND_rle(bvec& rhs);
+    void non_AND_non(bvec& rhs);
+    inline word_t popcount(word_t val) const;
+
 };
-
-// count the number of set bits
-inline uint64_t bvec::cnt() {
-	if (count == 0) 
-		for(vector<uint32_t>::iterator it = words.begin(); it != words.end(); ++it)
-			count += (*it & BIT32) ? (*it & BIT31) ? (*it & FILLMASK) * LITERAL_SIZE : 0 : __builtin_popcount(*it);
-	return count;
-}
-
-// make a copy
-inline bvec& bvec::copy(const bvec& bv) {
-	words = bv.words;
-	count = bv.count;
-	size = bv.size;
-	return *this;
-}
 
 #endif
