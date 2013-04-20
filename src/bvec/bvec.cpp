@@ -1,11 +1,5 @@
 #include "bvec.h"
 
-// checkpoint: active word and associated info
-struct checkpoint {
-    vector<word_t>::iterator active_word;
-    word_t bit_pos;
-} frontier;
-
 // constructor - given a sorted vector of distinct 32bit integers
 bvec::bvec(vector<word_t>& vals) {
     count = vals.size();

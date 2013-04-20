@@ -23,7 +23,7 @@ class bvec {
     bool rle;
     word_t count; // cache the number of set bits
     word_t size; // bits in the uncompressed bitvector
-    
+
     friend class boost::serialization::access;
     friend ostream & operator <<(ostream &, const bvec &);
 
@@ -31,7 +31,13 @@ class bvec {
     void serialize(Archive & ar, const unsigned int version) {
         ar & words & count & size & rle;
     }
-    
+
+    // checkpoint: active word and associated info
+    struct checkpoint {
+        vector<word_t>::iterator active_word;
+        word_t bit_pos;
+    } frontier;
+
 public:
     // Destructor
     ~bvec() {};

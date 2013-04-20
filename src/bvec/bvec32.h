@@ -1,6 +1,8 @@
 #ifndef SNAPDRAGON_BVEC32_H
 #define SNAPDRAGON_BVEC32_H
 
+#include <stdint.h>
+
 #define DEBUG false
 
 #define WORD_SIZE               32
