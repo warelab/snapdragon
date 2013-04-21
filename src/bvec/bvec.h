@@ -75,15 +75,15 @@ public:
     void appendFill(bool bit, word_t cnt);
 
     // basic metrics
-    inline word_t cnt();
-    inline word_t get_size();
-    inline word_t bytes();
+    word_t cnt();
+    word_t get_size();
+    word_t bytes();
 
 private:
 
     bool low_density(vector<word_t>& vals);
     void construct_rle(vector<word_t>& vals);
-    inline bvec& copy(const bvec& bv);
+    bvec& copy(const bvec& bv);
     void matchSize(bvec& bv);
     void rle_OR_rle(bvec& rhs);
     void rle_OR_non(bvec& rhs);
@@ -93,7 +93,7 @@ private:
     void rle_AND_non(bvec& rhs);
     void non_AND_rle(bvec& rhs);
     void non_AND_non(bvec& rhs);
-    inline word_t popcount(word_t val) const;
+    word_t popcount(word_t val) const;
 
 };
 

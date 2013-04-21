@@ -1,8 +1,8 @@
-#include "bvec/bvec32.h"
+#include "bvec/bvec.h"
 #include "test.h"
 #include <algorithm>
 
-bvec32* random_bvec(int n) {
+bvec* random_bvec(int n) {
 	// simulate random bitvectors with up to 1 billion points
 	// 16mers - up to 2^32 - 1
 	// 32mers - up to 2^64 - 1
@@ -24,7 +24,7 @@ bvec32* random_bvec(int n) {
 		++ii32;
 	}
 	printf("generated %zi distinct random uint32_t\n",uniq.size());
-    return new bvec32(uniq);
+    return new bvec(uniq);
 }
 
 using namespace std;
@@ -33,8 +33,8 @@ int main(int argc, char *argv[]) {
 	if (argc > 1) 
 		n = atoi(argv[1]);
 
-	bvec32 * original = random_bvec(n);
-    bvec32 * deserialized = new bvec32();
+	bvec * original = random_bvec(n);
+    bvec * deserialized = new bvec();
     
     char filename[200];
     std::tmpnam(filename);

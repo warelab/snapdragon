@@ -2,8 +2,8 @@
 #include "bvec.h"
 
 // constructor - given a previously dumped bvec
-bvec::bvec(uint32_t *buf) {
-    uint32_t nwords = buf[0];
+bvec::bvec(word_t *buf) {
+    word_t nwords = buf[0];
     size = buf[1];
     count = buf[2];
     rle = false;
@@ -18,10 +18,11 @@ bvec::bvec(uint32_t *buf) {
 }
 
 // DIY serialization
-size_t bvec::dump(uint32_t **buf) {
+size_t
+bvec::dump(word_t **buf) {
     // allocate space in buf
-    size_t dbytes = sizeof(uint32_t)*(3 + words.size());
-    *buf = (uint32_t*)malloc(dbytes);
+    size_t dbytes = sizeof(word_t)*(3 + words.size());
+    *buf = (word_t*)malloc(dbytes);
     if (*buf == NULL) {
         fprintf(stderr,"failed to allocate %zi bytes\n",dbytes);
         return 0;
@@ -34,8 +35,9 @@ size_t bvec::dump(uint32_t **buf) {
     return dbytes;
 }
 
-bool bvec::low_density(vector<uint32_t>& vals) {
-    if (DEBUG) printf("low_density() %u/%u %c %f\n", (uint32_t)vals.size(),
+bool
+bvec::low_density(vector<word_t>& vals) {
+    if (DEBUG) printf("low_density() %u/%u %c %f\n", (word_t)vals.size(),
         vals.back() - vals.front() + 1,
             ((double)vals.size()/(double)(vals.back() - vals.front() + 1) < 1.0/(double)LITERAL_SIZE) ? '<' : '>',
                 1.0/(double)LITERAL_SIZE);
@@ -43,7 +45,8 @@ bool bvec::low_density(vector<uint32_t>& vals) {
     
 }
 
-void bvec::print() {
+void
+bvec::print() {
     printf("rle: %c\n",rle ? 'T' : 'F');
     printf("words:\n");
     for(int i=0;i<words.size();i++) {
@@ -60,7 +63,8 @@ void bvec::print() {
     }
 }
 
-void bvec::construct_rle(vector<uint32_t>& vals) {
+void
+bvec::construct_rle(vector<word_t>& vals) {
     rle = true;
     frontier.bit_pos=0;
     if (vals.size() == 0) {
@@ -72,9 +76,9 @@ void bvec::construct_rle(vector<uint32_t>& vals) {
         return;
     }
     frontier.active_word = words.begin();
-    uint32_t word_end = LITERAL_SIZE - 1;
-    uint32_t word=0;
-    uint32_t gap_words = vals.front()/LITERAL_SIZE;
+    word_t word_end = LITERAL_SIZE - 1;
+    word_t word=0;
+    word_t gap_words = vals.front()/LITERAL_SIZE;
     if (gap_words > 0) {
         word_end += LITERAL_SIZE*gap_words;
         while (gap_words > FILLMASK) {
@@ -84,11 +88,11 @@ void bvec::construct_rle(vector<uint32_t>& vals) {
         if (gap_words > 0)
             words.push_back(gap_words | BIT1);
     }
-    for(vector<uint32_t>::iterator ii = vals.begin(); ii != vals.end(); ++ii) {
+    for(vector<word_t>::iterator ii = vals.begin(); ii != vals.end(); ++ii) {
         if (*ii == word_end)
             word |= 1;
         else if (*ii < word_end)
-            word |= ((uint32_t)1 << (word_end - *ii));
+            word |= ((word_t)1 << (word_end - *ii));
         else {
             if (word == ALL1S)
                 if ((words.size() != 0) &&
@@ -108,7 +112,7 @@ void bvec::construct_rle(vector<uint32_t>& vals) {
                 words.push_back(gap_words | BIT1);
             word_end += (gap_words+1)*LITERAL_SIZE;
             word = (word_end - *ii == LITERAL_SIZE)
-                ? 1 : (uint32_t)1 << (word_end - *ii);
+                ? 1 : (word_t)1 << (word_end - *ii);
         }
     }
     // add the last word
@@ -125,16 +129,17 @@ void bvec::construct_rle(vector<uint32_t>& vals) {
     size = word_end+1;
 }
 
-void bvec::decompress() {
+void
+bvec::decompress() {
     if (!rle) { /* Throw exception? */ return; }
     // retrieve the set bits from the compressed vector
-    vector<uint32_t> res;
+    vector<word_t> res;
     res.reserve(cnt());
-    uint32_t pos=0;
-    for(vector<uint32_t>::iterator ii = words.begin(); ii != words.end(); ++ii) {
+    word_t pos=0;
+    for(vector<word_t>::iterator ii = words.begin(); ii != words.end(); ++ii) {
         if ((*ii & ONEFILL) == ONEFILL) {
-            uint32_t n_ones = LITERAL_SIZE*(*ii & FILLMASK);
-            for(uint32_t i=0;i < n_ones; i++) {
+            word_t n_ones = LITERAL_SIZE*(*ii & FILLMASK);
+            for(word_t i=0;i < n_ones; i++) {
                 res.push_back(pos);
                 pos++;
             }
@@ -142,8 +147,8 @@ void bvec::decompress() {
         else if (*ii & BIT1)
             pos += LITERAL_SIZE*(*ii & FILLMASK);
         else { // desconstruct the literal word
-            for(uint32_t bit=1; bit<=LITERAL_SIZE; bit++)
-                if (*ii & ((uint32_t)1 << (LITERAL_SIZE-bit)))
+            for(word_t bit=1; bit<=LITERAL_SIZE; bit++)
+                if (*ii & ((word_t)1 << (LITERAL_SIZE-bit)))
                     res.push_back(pos+bit-1);
             pos += LITERAL_SIZE;
         }
@@ -154,7 +159,8 @@ void bvec::decompress() {
 }
 
 // only works with compressed - return the position of the next set bit after position x
-uint32_t bvec::next_one(uint32_t x) {
+word_t
+bvec::next_one(word_t x) {
     if (!rle) { fprintf(stderr,"next_one() only works on compressed bitvectors\n"); exit(1); }
 
     x++;
@@ -166,7 +172,7 @@ uint32_t bvec::next_one(uint32_t x) {
     while(frontier.active_word != words.end()) {
         // what type of word is it?
         if (*(frontier.active_word) & BIT1) { // fill word
-            uint32_t span = (*(frontier.active_word) & FILLMASK) * LITERAL_SIZE;
+            word_t span = (*(frontier.active_word) & FILLMASK) * LITERAL_SIZE;
             if ((frontier.bit_pos + span >= x) && (*(frontier.active_word) & BIT2)) // x is within a 1-fill
                 return x;
             frontier.bit_pos += span;
@@ -184,10 +190,11 @@ uint32_t bvec::next_one(uint32_t x) {
     return size; // no next set bit, so return the number of bits
 }
 
-void bvec::flip() {
+void
+bvec::flip() {
     if (!rle)
         compress();
-    for(vector<uint32_t>::iterator it = words.begin(); it!=words.end(); ++it) {
+    for(vector<word_t>::iterator it = words.begin(); it!=words.end(); ++it) {
         if (*it & BIT1) { // fill word - flip BIT2
             if (*it & BIT2) { // 1-fill
                 // convert to 0-fill
@@ -205,9 +212,10 @@ void bvec::flip() {
     count = size-count;
 }
 
-void bvec::matchSize(bvec &bv) {
+void
+bvec::matchSize(bvec &bv) {
     if (size < bv.size) {
-        uint32_t gap_words = (bv.size - size)/LITERAL_SIZE;
+        word_t gap_words = (bv.size - size)/LITERAL_SIZE;
         while (gap_words > FILLMASK) {
             words.push_back(ZEROFULL);
             gap_words -= FILLMASK;
@@ -217,7 +225,7 @@ void bvec::matchSize(bvec &bv) {
         size = bv.size;
     }
     else if (size > bv.size) {
-        uint32_t gap_words = (size - bv.size)/LITERAL_SIZE;
+        word_t gap_words = (size - bv.size)/LITERAL_SIZE;
         while (gap_words > FILLMASK) {
             bv.words.push_back(ZEROFULL);
             gap_words -= FILLMASK;
@@ -228,24 +236,25 @@ void bvec::matchSize(bvec &bv) {
     }
 }
 
-void bvec::rle_OR_rle(bvec& bv) {
+void
+bvec::rle_OR_rle(bvec& bv) {
     // ensure that both bvecs are the same size
     this->matchSize(bv);
     if (size == 0)
         return;
     
-    vector<uint32_t> res; // fill this then swap with this.words
-    vector<uint32_t>::iterator a = words.begin();
-    vector<uint32_t>::iterator b = bv.words.begin();
+    vector<word_t> res; // fill this then swap with this.words
+    vector<word_t>::iterator a = words.begin();
+    vector<word_t>::iterator b = bv.words.begin();
 
     // maintain the end position of the current word
-    uint32_t a_pos = (*a & BIT1) ? (*a & FILLMASK) : 1;
-    uint32_t b_pos = (*b & BIT1) ? (*b & FILLMASK) : 1;
-    uint32_t res_pos=0;
-    uint32_t next_word;
+    word_t a_pos = (*a & BIT1) ? (*a & FILLMASK) : 1;
+    word_t b_pos = (*b & BIT1) ? (*b & FILLMASK) : 1;
+    word_t res_pos=0;
+    word_t next_word;
     bool incr_a = false;
     bool incr_b = false;
-    uint32_t last_pos = size/LITERAL_SIZE;
+    word_t last_pos = size/LITERAL_SIZE;
     while(res_pos != last_pos) {
         if (incr_a) {
             while(a_pos <= res_pos) {
@@ -274,7 +283,7 @@ void bvec::rle_OR_rle(bvec& bv) {
                     if (*b & BIT1) // zero fill
                         next_word = *a;
                     else {
-                        uint32_t u = *a | *b;
+                        word_t u = *a | *b;
                         next_word = (u == ALL1S) ? ONEFILL1 : u;
                     }
             incr_a = true;
@@ -325,7 +334,7 @@ void bvec::rle_OR_rle(bvec& bv) {
         ) {
             // merge fill words
             // but just don't exceed the capacity
-            uint32_t n_words = (res.back() & FILLMASK) + (next_word & FILLMASK);
+            word_t n_words = (res.back() & FILLMASK) + (next_word & FILLMASK);
             if (n_words >= FILLMASK) {
                 res.back() |= FILLMASK;
                 n_words -= FILLMASK;
@@ -345,24 +354,25 @@ void bvec::rle_OR_rle(bvec& bv) {
 }
 
 // in place version of the bitwise AND operator.
-void bvec::rle_AND_rle(bvec& bv) {
+void
+bvec::rle_AND_rle(bvec& bv) {
     // ensure that both bvecs are the same size
     this->matchSize(bv);
     if (size == 0)
         return;
     
-    vector<uint32_t> res; // fill this then swap with this.words
-    vector<uint32_t>::iterator a = words.begin();
-    vector<uint32_t>::iterator b = bv.words.begin();
+    vector<word_t> res; // fill this then swap with this.words
+    vector<word_t>::iterator a = words.begin();
+    vector<word_t>::iterator b = bv.words.begin();
 
     // maintain the end position of the current word
-    uint32_t a_pos = (*a & BIT1) ? *a & FILLMASK : 1;
-    uint32_t b_pos = (*b & BIT1) ? *b & FILLMASK : 1;
-    uint32_t res_pos=0;
-    uint32_t next_word;
+    word_t a_pos = (*a & BIT1) ? *a & FILLMASK : 1;
+    word_t b_pos = (*b & BIT1) ? *b & FILLMASK : 1;
+    word_t res_pos=0;
+    word_t next_word;
     bool incr_a = false;
     bool incr_b = false;
-    uint32_t last_pos = size/LITERAL_SIZE;
+    word_t last_pos = size/LITERAL_SIZE;
     while(res_pos != last_pos) {
         if (incr_a) {
             while(a_pos <= res_pos) {
@@ -384,7 +394,7 @@ void bvec::rle_AND_rle(bvec& bv) {
             else if ((*a & BIT1) || (*b & BIT1))
                 next_word = BIT1 | (a_pos - res_pos);
             else {
-                uint32_t u = *a & *b;
+                word_t u = *a & *b;
                 next_word = (u == 0) ? BIT1 | 1 : u;
             }
             incr_a = true;
@@ -435,7 +445,7 @@ void bvec::rle_AND_rle(bvec& bv) {
         ) {
             // merge fill words
             // but just don't exceed the capacity
-            uint32_t n_words = (res.back() & FILLMASK) + (next_word & FILLMASK);
+            word_t n_words = (res.back() & FILLMASK) + (next_word & FILLMASK);
             if (n_words >= FILLMASK) {
                 res.back() |= FILLMASK;
                 n_words -= FILLMASK;
@@ -452,7 +462,8 @@ void bvec::rle_AND_rle(bvec& bv) {
     count=0;
 }
 
-bool bvec::find(uint32_t x) {
+bool
+bvec::find(word_t x) {
     if (!rle) return binary_search(words.begin(), words.end(), x);
     // This function may be called on a sequence of increasing values
     // Use a checkpoint to determine if we can start at the active word
@@ -464,7 +475,7 @@ bool bvec::find(uint32_t x) {
     while(frontier.active_word != words.end()) {
         // what type of word is it?
         if (*(frontier.active_word) & BIT1) { // fill word
-            uint32_t span = (*(frontier.active_word) & FILLMASK) * LITERAL_SIZE;
+            word_t span = (*(frontier.active_word) & FILLMASK) * LITERAL_SIZE;
             if (frontier.bit_pos + span >= x) {
                 if (*(frontier.active_word) & BIT2) // 1-fill
                     return true;
@@ -487,10 +498,11 @@ bool bvec::find(uint32_t x) {
 
 // use the frontier instead of words.back() because we have frontier.bit_pos
 // advance the frontier after appending
-void bvec::appendFill(bool bit, uint32_t n) {
+void
+bvec::appendFill(bool bit, word_t n) {
     if (bit) count += n;
     if ((*(frontier.active_word) & BIT1) == 0) { // current word is a literal word
-        uint32_t bits_available = LITERAL_SIZE - frontier.bit_pos; // size % LITERAL_SIZE;
+        word_t bits_available = LITERAL_SIZE - frontier.bit_pos; // size % LITERAL_SIZE;
 //      fprintf(stderr,"bits_available: %u\n",bits_available);
         if(bit) {
             // append some ones
@@ -532,7 +544,7 @@ void bvec::appendFill(bool bit, uint32_t n) {
 //  print();
     if (n==0) return;
     // append/update fill words
-    uint32_t n_fills = n/LITERAL_SIZE;
+    word_t n_fills = n/LITERAL_SIZE;
     if (n_fills > 0) {
         if (bit) {
             if (*(frontier.active_word) & ONEFILL) { // extend previous 1-fill
@@ -565,4 +577,11 @@ void bvec::appendFill(bool bit, uint32_t n) {
         frontier.active_word = words.end() - 1;
         frontier.bit_pos = n;
     }
+}
+
+word_t bvec::cnt() {
+   if (count == 0)
+       for(vector<word_t>::iterator it = words.begin(); it != words.end(); ++it)
+           count += (*it & BIT2) ? (*it & BIT1) ? (*it & FILLMASK) * LITERAL_SIZE : 0 : __builtin_popcount(*it);
+   return count;
 }

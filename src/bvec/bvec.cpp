@@ -20,8 +20,8 @@ vector<word_t>& bvec::get_words() {
     return words;
 }
 
-inline word_t bvec::get_size() { return size; }
-inline word_t bvec::bytes() { return 4 * words.size(); }
+word_t bvec::get_size() { return size; }
+word_t bvec::bytes() { return 4 * words.size(); }
 
 void bvec::compress() {
     if (rle) { /* Throw exception? */ return; }
@@ -167,18 +167,21 @@ void bvec::non_AND_rle(bvec& bv) {
     non_AND_non(*tmp);
     delete tmp;
 }
+
 void bvec::rle_AND_non(bvec& bv) {
     // decompress
     // run non_AND_non
     decompress();
     non_AND_non(bv);
 }
+
 void bvec::non_OR_rle(bvec& bv) {
     // compress
     // run rle_OR_rle
     compress();
     rle_OR_rle(bv);
 }
+
 void bvec::rle_OR_non(bvec& bv) {
     // compress
     // run rle_OR_rle
@@ -209,9 +212,8 @@ void bvec::setBit(word_t x) {
     }
 }
 
-
-// make a copy
-inline bvec& bvec::copy(const bvec& bv) {
+bvec&
+bvec::copy(const bvec& bv) {
     words = bv.words;
     count = bv.count;
     size = bv.size;
@@ -219,22 +221,22 @@ inline bvec& bvec::copy(const bvec& bv) {
     return *this;
 }
 
-inline ostream & operator<<(ostream &os, const vector<word_t> vec) {
+ostream& operator<<(ostream &os, const vector<word_t> vec) {
     return os << vec;
 }
 
-inline ostream & operator<<(ostream &os, const bvec &vec) {
+ostream& operator<<(ostream &os, const bvec &vec) {
     return os << vec;
 }
 
-inline void
+void
 save_to_file(const bvec &bv, const char *filename) {
     std::ofstream ofs(filename);
     boost::archive::text_oarchive oa(ofs);
     oa << bv;
 }
 
-inline void
+void
 restore_from_file(bvec &bv, const char *filename) {
     std::ifstream ifs(filename);
     boost::archive::text_iarchive ia(ifs);
