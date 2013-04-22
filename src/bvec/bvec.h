@@ -72,12 +72,15 @@ public:
     // insert x into an existing bvec (at the end is faster)
     void setBit(word_t x);
     // for constructing a rle bvec one bit at a time
-    void appendFill(bool bit, word_t cnt);
+    void appendFill(bool bit, word_t count);
 
     // basic metrics
     word_t cnt();
     word_t get_size();
     word_t bytes();
+    
+    static void save_to_file(const bvec &bv, const char *filename);
+    static void restore_from_file(bvec &bv, const char *filename);
 
 private:
 

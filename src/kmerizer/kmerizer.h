@@ -9,7 +9,7 @@
 #define QUERY 2
 
 #include <vector>
-#include "bvec.h"
+#include "../bvec/bvec.h"
 
 typedef uint64_t kword_t;
 using namespace std;
