@@ -3,9 +3,7 @@
 
 #define DEBUG false
 #define NBINS 256
-#define CANONICAL 'C'
-#define BOTH 'B'
-#define READING 1
+#define READ 1
 #define QUERY 2
 
 #include <vector>
@@ -24,24 +22,32 @@ class Kmerizer {
     size_t  threads;
     size_t  threadBins;
     size_t  batches;
-    size_t  maxKmersPerBin;
     char    mode;
     char    state;
     char *  outdir;
 
-    // raw unsorted padded kmers, or sort|uniq'ed kmers
+    // unsorted padded packed kmers
     kword_t *             kmerBuf[NBINS];
     
-    // number of kmers in each bin (or number of distinct kmers)
+    // number of kmers in each bin
     uint32_t              binTally[NBINS];
+
+    // capacity of each bin
+    uint32_t              binCapacity[NBINS];
     
+    // common kmers lookup table: implemented as a pair of arrays
+    kword_t *             kmerLutK[NBINS]; // kmer
+    uint32_t *            kmerLutV[NBINS]; // frequency
+    uint32_t              lutTally[NBINS]; // number of entries
+
+    // data structures for querying
     // sorted distinct kmer frequencies
     vector<uint32_t>      kmerFreq[NBINS];
 
     // bitmap index of frequency counts
     vector<BitVector*>    counts[NBINS];
 
-    // bitmap self index of kmers
+    // bit sliced bitmap self index of sorted kmers
     vector<BitVector*>    slices[NBINS];
 
 public:
@@ -50,8 +56,10 @@ public:
              const size_t threads,
              const char * outdir,
              const char   mode);
+    
+    ~Kmerizer() {};
 
-    // allocate memory for each kmerBuf
+    // allocate memory for internal data structures
     int allocate(const size_t maximem);
 
     // extract (canonicalized) kmers from the sequence
@@ -65,15 +73,15 @@ public:
 
     // output the kmer count frequency distribution
     void histogram();
-    uint32_t find(const char* query);
-    void dump(char *fname);
-    void pdump(char *fname, BitVector **mask);
-    void sdump(char *fname, BitVector **mask);
-    void filter(uint32_t min, uint32_t max, BitVector **mask);
-    
-    uint32_t frequency(size_t bin, uint32_t pos);
 
-    ~Kmerizer() {};
+    // output the frequency of the kmers in the given sequence
+    uint32_t find(const char* query);
+
+    // write the kmers to an output file as a tab delimited dump (kmer, frequency)
+    void dump(char *fname);
+    
+    // range query - populates mask bitvectors to mark kmers in range
+    void filter(uint32_t min, uint32_t max, BitVector **mask);
 
 private:
 
@@ -85,13 +93,12 @@ private:
 
     inline void unpack(kword_t* kmer, char *seq);
 
+    kword_t* canonicalize(kword_t *packed, kword_t *rcpack) const;
+
     // reverse complement
     inline kword_t revcomp(const kword_t val) const;
 
-    // to select a bin
-    inline uint8_t hashkmer(const kword_t *kmer, const uint8_t seed) const;
-
-    // count set bits in a kmer (actually XOR of 2 kmers)
+    // count set bits in a kmer (usually XOR of 2 kmers)
     inline unsigned int popCount(kword_t v) const;
 
     // returns the position of the rth set bit in v
@@ -102,30 +109,33 @@ private:
     uint32_t pos2value(size_t pos, vector<uint32_t> &values,
                        vector<BitVector*> &index);
 
-    kword_t* canonicalize(kword_t *packed, kword_t *rcpack) const;
     uint32_t find(kword_t *kmer, size_t bin);
 
     // kmerBuf is full. uniqify and write batch to disk
     void serialize();
     
-    // qsort each kmerBuf, update binTally, and fill counts
+    // sort each kmerBuf, update binTally, and fill counts
     void uniqify();
-    
-    // for parallelization
     void doUnique(const size_t from, const size_t to);
+    // write the counted kmers to an output file
     void writeBatch();
-    
-    // for parallelization
     void doWriteBatch(const size_t from, const size_t to);
+    // merge output files
     void mergeBatches();
     void doMergeBatches(const size_t from, const size_t to);
+    // read the frequency bitmap index into memory
     void doLoadIndex(const size_t from, const size_t to);
+    // write kmers to an output file
     void doDump(const size_t from, const size_t to, FILE *fp, BitVector **mask);
+    // range query
     void doFilter(const size_t from,
                   const size_t to,
                   uint32_t min,
                   uint32_t max,
                   BitVector **mask);
+    
+    void pdump(char *fname, BitVector **mask);
+    void sdump(char *fname, BitVector **mask);
     void doPdump(const size_t from,
                  const size_t to,
                  char *buff,
@@ -140,12 +150,37 @@ private:
     size_t findMin(const kword_t* kmers, const uint32_t* kcounts);
     // uint32_t pos2value(size_t pos, vector<uint32_t> &values, vector<BitVector*> &index);
     // size_t pos2kmer(size_t pos, kword_t *kmer, vector<BitVector*> &index);
+    // lookup the frequency of a specific kmer by position?
+
+    uint32_t frequency(size_t bin, uint32_t pos);
+
     void printKmer(kword_t *kmer);
     void bitSlice(kword_t *kmers,
                   const size_t n,
                   BitVector **kmer_slices,
                   size_t nbits);
 
+    // bitwise reverse complement of values from 0 to 255
+    static const kword_t rctable[256] =
+    {
+      255,191,127,63,239,175,111,47,223,159,95,31,207,143,79,15,
+      251,187,123,59,235,171,107,43,219,155,91,27,203,139,75,11,
+      247,183,119,55,231,167,103,39,215,151,87,23,199,135,71,7,
+      243,179,115,51,227,163,99,35,211,147,83,19,195,131,67,3,
+      254,190,126,62,238,174,110,46,222,158,94,30,206,142,78,14,
+      250,186,122,58,234,170,106,42,218,154,90,26,202,138,74,10,
+      246,182,118,54,230,166,102,38,214,150,86,22,198,134,70,6,
+      242,178,114,50,226,162,98,34,210,146,82,18,194,130,66,2,
+      253,189,125,61,237,173,109,45,221,157,93,29,205,141,77,13,
+      249,185,121,57,233,169,105,41,217,153,89,25,201,137,73,9,
+      245,181,117,53,229,165,101,37,213,149,85,21,197,133,69,5,
+      241,177,113,49,225,161,97,33,209,145,81,17,193,129,65,1,
+      252,188,124,60,236,172,108,44,220,156,92,28,204,140,76,12,
+      248,184,120,56,232,168,104,40,216,152,88,24,200,136,72,8,
+      244,180,116,52,228,164,100,36,212,148,84,20,196,132,68,4,
+      240,176,112,48,224,160,96,32,208,144,80,16,192,128,64,0,
+    };
+    
 };
 
 inline kword_t Kmerizer::twoBit(const kword_t val) const {
@@ -246,71 +281,15 @@ inline void Kmerizer::unpack(kword_t* kmer, char* seq) {
 }
 
 inline kword_t Kmerizer::revcomp(const kword_t val) const {
-    // bitwise reverse complement of values from 0 to 255
-    static const kword_t table[256] =
-    {
-        255,191,127,63,239,175,111,47,223,159,95,31,207,143,79,15,
-        251,187,123,59,235,171,107,43,219,155,91,27,203,139,75,11,
-        247,183,119,55,231,167,103,39,215,151,87,23,199,135,71,7,
-        243,179,115,51,227,163,99,35,211,147,83,19,195,131,67,3,
-        254,190,126,62,238,174,110,46,222,158,94,30,206,142,78,14,
-        250,186,122,58,234,170,106,42,218,154,90,26,202,138,74,10,
-        246,182,118,54,230,166,102,38,214,150,86,22,198,134,70,6,
-        242,178,114,50,226,162,98,34,210,146,82,18,194,130,66,2,
-        253,189,125,61,237,173,109,45,221,157,93,29,205,141,77,13,
-        249,185,121,57,233,169,105,41,217,153,89,25,201,137,73,9,
-        245,181,117,53,229,165,101,37,213,149,85,21,197,133,69,5,
-        241,177,113,49,225,161,97,33,209,145,81,17,193,129,65,1,
-        252,188,124,60,236,172,108,44,220,156,92,28,204,140,76,12,
-        248,184,120,56,232,168,104,40,216,152,88,24,200,136,72,8,
-        244,180,116,52,228,164,100,36,212,148,84,20,196,132,68,4,
-        240,176,112,48,224,160,96,32,208,144,80,16,192,128,64,0,
-    };
-    
     return
-        (table[val&0xFFUL]<<56) |
-        (table[(val>>8)&0xFFUL]<<48) |
-        (table[(val>>16)&0xFFUL]<<40) |
-        (table[(val>>24)&0xFFUL]<<32) |
-        (table[(val>>32)&0xFFUL]<<24) |
-        (table[(val>>40)&0xFFUL]<<16) |
-        (table[(val>>48)&0xFFUL]<<8) |
-        (table[(val>>56)&0xFFUL]);
-}
-
-inline uint8_t
-Kmerizer::hashkmer(const kword_t *kmer, const uint8_t seed) const {
-    static const uint8_t Rand8[256] =
-    {
-        105,193,195, 26,208, 80, 38,156,128,  2,101,205, 75,116,139, 61,
-        197,120,244, 51,185,132, 55,150,177,241,103,196, 13,237,136, 24,
-        211, 56,207,  9, 30,145, 18,167,108, 32,106,151,  3, 54,248, 65,
-         17,198, 85, 95, 29, 83,  4,206,188,186,107,255,129, 35,142, 91,
-        203,158, 74,138,162,135,102,114, 81,170, 10, 19,215, 57,214, 70,
-         37,163,231,227,152, 14, 40, 84, 68,252,  0, 66,121,127,223, 78,
-        201, 34,225,240,124,191, 12, 42, 92,209,  1, 31,130,100, 28,224,
-        161,249,110, 77, 87,144,181, 21, 86, 58,174,113,194,147,242, 50,
-         59, 48,250, 88,184,245, 45, 44,148, 73,154,230,149, 89,118,119,
-         79,229,239,117,189,179,254,155, 20,176,157,212, 36,123,234, 46,
-        159,202,171, 67, 93, 62, 47,164,247, 15,137,235,216,160,200,133,
-        140,172,192,221,131,111,218,210,153,219, 41, 72, 63,183, 39,  8,
-         98,168, 52,213,175,134,115, 90, 82, 16,226,220,251, 69,243,233,
-        180,  5, 99, 60,  7,204,112,253,182,109, 25, 53, 94,187,190,178,
-         97, 49,126,  6, 64,143,169,173, 43,199, 33, 96, 76, 11,236, 23,
-        166,104,141,246,125,217,122,238, 27, 22,228,146,165, 71,232,222
-    };
-    uint8_t h=seed;
-    for(size_t i=0;i<nwords;i++) {
-        h = Rand8[h ^ (uint8_t)(kmer[i]>>56)];
-        h = Rand8[h ^ (uint8_t)(kmer[i]>>48) & 255];
-        h = Rand8[h ^ (uint8_t)(kmer[i]>>40) & 255];
-        h = Rand8[h ^ (uint8_t)(kmer[i]>>32) & 255];
-        h = Rand8[h ^ (uint8_t)(kmer[i]>>24) & 255];
-        h = Rand8[h ^ (uint8_t)(kmer[i]>>16) & 255];
-        h = Rand8[h ^ (uint8_t)(kmer[i]>>8) & 255];
-        h = Rand8[h ^ (uint8_t)kmer[i] & 255];
-    }
-    return h;
+        (rctable[val&0xFFUL]<<56) |
+        (rctable[(val>>8)&0xFFUL]<<48) |
+        (rctable[(val>>16)&0xFFUL]<<40) |
+        (rctable[(val>>24)&0xFFUL]<<32) |
+        (rctable[(val>>32)&0xFFUL]<<24) |
+        (rctable[(val>>40)&0xFFUL]<<16) |
+        (rctable[(val>>48)&0xFFUL]<<8) |
+        (rctable[(val>>56)&0xFFUL]);
 }
 
 

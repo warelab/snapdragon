@@ -3,18 +3,17 @@
 #include <boost/bind.hpp>
 #include <bitset>
 #include <algorithm> // stl sort
-#include <cstdlib> // qsort()
 #include <cstdio>  // sprintf()
 #include <cstring> // memcpy()
 #include <sys/stat.h> // mkdir()
 #include <sys/time.h> // gettimeofday()
 
-Kmerizer::Kmerizer(const size_t k,
+Kmerizer::Kmerizer(const size_t klength,
                    const size_t threads,
                    const char * outdir,
                    const char   mode)
 {
-    this->k       = k;
+    this->k       = klength-4;
     this->outdir  = new char[strlen(outdir)]; strcpy(this->outdir, outdir);
     this->mode    = mode;
     this->threads = threads;
@@ -32,41 +31,77 @@ Kmerizer::Kmerizer(const size_t k,
     this->nwords     = ((k-1)>>5)+1;
     this->kmerSize   = this->nwords * sizeof(kword_t);
     this->threadBins = NBINS / this->threads;
-    this->state      = READING;
+    this->state      = READ;
     this->batches    = 0;
-    fprintf(stderr,"new() nwords: %zi, kmerSize: %zi\n",nwords,kmerSize);
+    
+    if (DEBUG) fprintf(stderr,"new() k: %zi nwords: %zi, kmerSize: %zi\n",k,nwords,kmerSize);
 }
 
 int Kmerizer::allocate(const size_t maximem) {
-    fprintf(stderr, "Kmerizer::allocate(%zi)", maximem);
+    if (DEBUG) fprintf(stderr, "Kmerizer::allocate(%zi)", maximem);
     timeval t1, t2;
     double elapsedTime;
     gettimeofday(&t1, NULL);
+
+    // allocate memory for the common kmer lookup table.
+    // allocate memory for the kmer buffers - assume uniform distribution
+    // zero the tallies
     memset(binTally, 0, sizeof(uint32_t) * NBINS);
-    maxKmersPerBin = maximem / kmerSize / NBINS;
+    memset(lutTally, 0, sizeof(uint32_t) * NBINS);
+    size_t capacity = maximem / kmerSize / NBINS / 2;
     for (size_t i = 0; i < NBINS; i++) {
-        kmerBuf[i] = (kword_t *) calloc(maxKmersPerBin, kmerSize);
+        binCapacity[i] = capacity;
+        kmerBuf[i] = (kword_t *) calloc(capacity, kmerSize);
         if (kmerBuf[i] == NULL) return 1;
+        kmerLutK[i] = (kword_t *) calloc(capacity, kmerSize);
+        if (kmerLutK[i] == NULL) return 1;
+        kmerLutV[i] = (uint32_t *) calloc(capacity, sizeof(uint32_t));
+        if (kmerLutV[i] == NULL) return 1;
+        
+        lutTally[i] = 1; // heuristic: add the A* kmer in each bin
     }
+
     gettimeofday(&t2, NULL);
     elapsedTime = t2.tv_sec - t1.tv_sec + (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to ms
-    fprintf(stderr," took %f seconds\n",elapsedTime);
-    fprintf(stderr,"nwords: %zi, kmerSize: %zi, maxKmersPerBin: %zi\n",nwords,kmerSize,maxKmersPerBin);
-    
+    if (DEBUG) fprintf(stderr," took %f seconds\n",elapsedTime);
     return 0;
 }
 
-kword_t * Kmerizer::canonicalize(kword_t *packed, kword_t *rcpack) const {
-    for (size_t i=0;i<nwords;i++) {
+kword_t * Kmerizer::canonicalize(kword_t *packed, kword_t *rcpack, size_t *bin) const {
+
+    // copy the words (reverse their order)
+    for (size_t i=0;i<nwords;i++)
         rcpack[i] = packed[nwords-1-i];
-    }
+
+    // shift bits from word to word if necessary
     if (lshift) {
         for (size_t i=0;i<nwords-1;i++) {
             rcpack[i] |= rcpack[i+1] << lshift;
             rcpack[i+1] >>= rshift;
         }
     }
+    size_t rcbin = rctable[rcpack[0] & 255UL];
+    if (rcbin > *bin)
+        return packed;
+
+    // shift each word by 8 bits
+    rcpack[0] >>= 8;
+    for (size_t i=0;i<nwords-1;i++) {
+        rcpack[i] |= rcpack[i+1] << 56;
+        rcpack[i+1] >>= 8;
+    }
+    if (lshift >= 8)
+        rcpack[nwords-1] |= bin << (lshift-8);
+    else if (lshift > 0) {
+        rcpack[nwords-2] |= bin << 56+lshift;
+        rcpack[nwords-1] |= bin >> lshift;
+    }
+    else
+        rcpack[nwords-1] |= bin << 56;
+
     int cmp=0;
+    if (rcbin > *bin)
+        cmp = 1;
     for (size_t i=0;i<nwords;i++) {
         rcpack[i] = revcomp(rcpack[i]);
         if (i==nwords-1) rcpack[i] >>=rshift;
@@ -77,17 +112,27 @@ kword_t * Kmerizer::canonicalize(kword_t *packed, kword_t *rcpack) const {
                 cmp = 1;
         }
     }
-    if(cmp > 0)
+    if(cmp > 0) {
+        *bin = rcbin;
         return rcpack;
+    }
     else
         return packed;
 }
 
-void Kmerizer::nextKmer(kword_t* kmer, const char nucl) {
+size_t Kmerizer::nextKmer(kword_t* kmer, size_t bin, const char nucl) {
+    // update the bin
+    bin <<= 2;
+    if (nwords==1)
+        bin |= (kmer[0] >> shiftlastby);
+    else
+        bin |= (kmer[0] >> 62);
+    bin &= 255; // mask out the higher order bits
+    
     // shift first kmer by 2 bits
     kmer[0] <<= 2;
     for (size_t w = 1; w < nwords - 1; w++) { // middle (full length) words
-        kmer[w-1] |= kmer[w] >> 62; // move the top two bits
+        kmer[w-1] |= (kmer[w] >> 62); // move the top two bits
         kmer[w] <<= 2; // make room for the next word
     }
     // last word (if not the first)
@@ -97,54 +142,37 @@ void Kmerizer::nextKmer(kword_t* kmer, const char nucl) {
     }
     kmer[nwords-1] |= twoBit(nucl);
     kmer[nwords-1] &= kmask;
+    return bin;
 }
 
 void Kmerizer::addSequence(const char* seq, const int length) {
-    if (length < k) return;
+    if (length < k+4) return;
     kword_t packed[nwords];
     kword_t rcpack[nwords];
     memset(packed, 0, kmerSize);
-
-    for (size_t i = 0; i < k; i++)
-        nextKmer(packed,seq[i]);
+    size_t bin=0;
+    for (size_t i = 0; i < k+4; i++)
+        bin = nextKmer(packed,bin,seq[i]);
 
     kword_t *kmer = packed;
-    size_t bin;
     if (mode == CANONICAL)
-        kmer = canonicalize(packed,rcpack);
-    if (mode == BOTH) {
-        kmer = canonicalize(packed,rcpack);
-        bin = hashkmer(packed,0);
-        memcpy(kmerBuf[bin] + nwords*binTally[bin], packed, kmerSize);
-        binTally[bin]++;
-        if (binTally[bin] == maxKmersPerBin) serialize();
-        kmer = rcpack;
-    }
-    bin = hashkmer(kmer,0);
+        kmer = canonicalize(packed,rcpack,&bin);
+
+    // check lookup table
     memcpy(kmerBuf[bin] + nwords*binTally[bin], kmer, kmerSize);
     binTally[bin]++;
-    if (binTally[bin] == maxKmersPerBin) serialize();
+    if (binTally[bin] == binCapacity[bin]) serialize();
     // pack the rest of the sequence
-    for (size_t i=k; i<(size_t)length;i++) {
-        nextKmer(packed, seq[i]);
+    for (size_t i=k+4; i<(size_t)length;i++) {
+        bin = nextKmer(packed, bin, seq[i]);
         if (mode == CANONICAL)
-            kmer = canonicalize(packed,rcpack);
-        if (mode == BOTH) {
-            kmer = canonicalize(packed,rcpack);
-            bin = hashkmer(packed,0);
-            memcpy(kmerBuf[bin] + nwords*binTally[bin], packed, kmerSize);
+            kmer = canonicalize(packed,rcpack, &bin);
+        for(size_t w=0;w<nwords;w++) {
+            // check lookup table
+            memcpy(kmerBuf[bin] + nwords*binTally[bin], kmer, kmerSize);
             binTally[bin]++;
-            if (binTally[bin] == maxKmersPerBin) serialize();
-            kmer = rcpack;
+            if (binTally[bin] == binCapacity[bin]) serialize();
         }
-        for(size_t w=0;w<nwords;w++)
-            if (kmer[w]) {
-                bin = hashkmer(kmer,0);
-                memcpy(kmerBuf[bin] + nwords*binTally[bin], kmer, kmerSize);
-                binTally[bin]++;
-                if (binTally[bin] == maxKmersPerBin) serialize();
-                break;
-            }
     }
 }
 
