@@ -1,10 +1,11 @@
 #ifndef SNAPDRAGON_KMERIZER_H
 #define SNAPDRAGON_KMERIZER_H
 
-#define DEBUG false
+#define DEBUG true
 #define NBINS 256
 #define READ 1
 #define QUERY 2
+#define CANONICAL 'C'
 
 #include <vector>
 #include "../bvec/bvec.h"
@@ -21,7 +22,7 @@ class Kmerizer {
     size_t  kmerSize; // in bytes
     size_t  threads;
     size_t  threadBins;
-    size_t  batches;
+    size_t  batches[NBINS];
     char    mode;
     char    state;
     char *  outdir;
@@ -31,9 +32,11 @@ class Kmerizer {
     
     // number of kmers in each bin
     uint32_t              binTally[NBINS];
+    uint32_t              rareKmers[NBINS]; // number of rare kmers in each bin (not in kmerLut)
 
     // capacity of each bin
     uint32_t              binCapacity[NBINS];
+    uint32_t              lutCapacity[NBINS];
     
     // common kmers lookup table: implemented as a pair of arrays
     kword_t *             kmerLutK[NBINS]; // kmer
@@ -83,20 +86,25 @@ public:
     // range query - populates mask bitvectors to mark kmers in range
     void filter(uint32_t min, uint32_t max, BitVector **mask);
 
+    void vecHist(vector<uint32_t> &vec, vector<uint32_t> &values, vector<uint32_t> &frequency);
+    void bitHist(vector<uint32_t> &vec, vector<uint32_t> &values, vector<uint32_t> &frequency);
+
 private:
 
     // pack nucleotides into 2 bits
     inline kword_t twoBit(const kword_t val) const;
 
     // shift kmer to make room for nucl
-    void nextKmer(kword_t* kmer, const char nucl);
+    size_t nextKmer(kword_t* kmer, size_t bin, const char nucl);
 
     inline void unpack(kword_t* kmer, char *seq);
 
-    kword_t* canonicalize(kword_t *packed, kword_t *rcpack) const;
+    kword_t* canonicalize(kword_t *packed, kword_t *rcpack, size_t *bin) const;
 
     // reverse complement
     inline kword_t revcomp(const kword_t val) const;
+
+    int searchLut(kword_t *kmer, size_t bin);
 
     // count set bits in a kmer (usually XOR of 2 kmers)
     inline unsigned int popCount(kword_t v) const;
@@ -160,26 +168,6 @@ private:
                   BitVector **kmer_slices,
                   size_t nbits);
 
-    // bitwise reverse complement of values from 0 to 255
-    static const kword_t rctable[256] =
-    {
-      255,191,127,63,239,175,111,47,223,159,95,31,207,143,79,15,
-      251,187,123,59,235,171,107,43,219,155,91,27,203,139,75,11,
-      247,183,119,55,231,167,103,39,215,151,87,23,199,135,71,7,
-      243,179,115,51,227,163,99,35,211,147,83,19,195,131,67,3,
-      254,190,126,62,238,174,110,46,222,158,94,30,206,142,78,14,
-      250,186,122,58,234,170,106,42,218,154,90,26,202,138,74,10,
-      246,182,118,54,230,166,102,38,214,150,86,22,198,134,70,6,
-      242,178,114,50,226,162,98,34,210,146,82,18,194,130,66,2,
-      253,189,125,61,237,173,109,45,221,157,93,29,205,141,77,13,
-      249,185,121,57,233,169,105,41,217,153,89,25,201,137,73,9,
-      245,181,117,53,229,165,101,37,213,149,85,21,197,133,69,5,
-      241,177,113,49,225,161,97,33,209,145,81,17,193,129,65,1,
-      252,188,124,60,236,172,108,44,220,156,92,28,204,140,76,12,
-      248,184,120,56,232,168,104,40,216,152,88,24,200,136,72,8,
-      244,180,116,52,228,164,100,36,212,148,84,20,196,132,68,4,
-      240,176,112,48,224,160,96,32,208,144,80,16,192,128,64,0,
-    };
     
 };
 
@@ -281,6 +269,26 @@ inline void Kmerizer::unpack(kword_t* kmer, char* seq) {
 }
 
 inline kword_t Kmerizer::revcomp(const kword_t val) const {
+    // bitwise reverse complement of values from 0 to 255
+    static const kword_t rctable[256] = {
+      255,191,127,63,239,175,111,47,223,159,95,31,207,143,79,15,
+      251,187,123,59,235,171,107,43,219,155,91,27,203,139,75,11,
+      247,183,119,55,231,167,103,39,215,151,87,23,199,135,71,7,
+      243,179,115,51,227,163,99,35,211,147,83,19,195,131,67,3,
+      254,190,126,62,238,174,110,46,222,158,94,30,206,142,78,14,
+      250,186,122,58,234,170,106,42,218,154,90,26,202,138,74,10,
+      246,182,118,54,230,166,102,38,214,150,86,22,198,134,70,6,
+      242,178,114,50,226,162,98,34,210,146,82,18,194,130,66,2,
+      253,189,125,61,237,173,109,45,221,157,93,29,205,141,77,13,
+      249,185,121,57,233,169,105,41,217,153,89,25,201,137,73,9,
+      245,181,117,53,229,165,101,37,213,149,85,21,197,133,69,5,
+      241,177,113,49,225,161,97,33,209,145,81,17,193,129,65,1,
+      252,188,124,60,236,172,108,44,220,156,92,28,204,140,76,12,
+      248,184,120,56,232,168,104,40,216,152,88,24,200,136,72,8,
+      244,180,116,52,228,164,100,36,212,148,84,20,196,132,68,4,
+      240,176,112,48,224,160,96,32,208,144,80,16,192,128,64,0,
+    };
+
     return
         (rctable[val&0xFFUL]<<56) |
         (rctable[(val>>8)&0xFFUL]<<48) |
