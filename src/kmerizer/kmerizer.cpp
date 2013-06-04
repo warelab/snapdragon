@@ -53,11 +53,11 @@ int Kmerizer::allocate(const size_t maximem) {
     for (size_t i = 0; i < NBINS; i++) {
         binCapacity[i] = 3*capacity;
         lutCapacity[i] = capacity;
-        kmerBuf[i] = (kword_t *) calloc(3*capacity, kmerSize);
+        kmerBuf[i] = (kword_t *) calloc(binCapacity[i], kmerSize);
         if (kmerBuf[i] == NULL) return 1;
-        kmerLutK[i] = (kword_t *) calloc(capacity, kmerSize);
+        kmerLutK[i] = (kword_t *) calloc(lutCapacity[i], kmerSize);
         if (kmerLutK[i] == NULL) return 1;
-        kmerLutV[i] = (uint32_t *) calloc(capacity, sizeof(uint32_t));
+        kmerLutV[i] = (uint32_t *) calloc(lutCapacity[i], sizeof(uint32_t));
         if (kmerLutV[i] == NULL) return 1;
         
         lutTally[i] = 1; // heuristic: add the A* kmer in each bin
@@ -595,7 +595,7 @@ void Kmerizer::doUnique(const size_t from, const size_t to) {
             }
             distinct++;
             // after the first batch, add the most frequent kmers to the common kmer lookup table
-            if (batches[bin] == 0) {
+            if (lutTally[bin] == 1) {
                 // sort/uniq -c the tally array
                 vector<uint32_t> df, df_count;
                 bitHist(tally, df, df_count);
