@@ -364,10 +364,15 @@ void Kmerizer::uniqify() {
     double elapsedTime;
     gettimeofday(&t1, NULL);
     boost::thread_group tg;
+/*
     for (size_t i = 0; i < NBINS; i += threadBins) {
         size_t j = (i + threadBins > NBINS) ? NBINS : i + threadBins;
-        fprintf(stderr,"i: %zi, threadBins: %zi, j: %zi\n",i,threadBins,j);
+        // fprintf(stderr,"i: %zi, threadBins: %zi, j: %zi\n",i,threadBins,j);
         tg.create_thread(boost::bind(&Kmerizer::doUnique, this, i, j));
+    }
+*/
+    for(size_t i=0;i<NBINS;i++) {
+        tg.create_thread(boost::bind(&Kmerizer::doUnique, this, i,i+1));
     }
     tg.join_all();
     state = QUERY;
@@ -529,7 +534,7 @@ bool operator<(const kmer8_t& a, const kmer8_t& b) {
 }
 
 void Kmerizer::doUnique(const size_t from, const size_t to) {
-    fprintf(stderr,"doUnique(%zi,%zi)\n",from, to);
+//    fprintf(stderr,"doUnique(%zi,%zi)\n",from, to);
     for (size_t bin=from; bin<to; bin++) {
 //        fprintf(stderr,"nwords: %zi, binTally[%zi]: %u, ztally: %u\n",nwords,bin,binTally[bin],kmerLutV[bin][0]);
         
@@ -553,7 +558,7 @@ void Kmerizer::doUnique(const size_t from, const size_t to) {
         if (binTally[bin] >= 0.90*(float)binCapacity[bin]) {
             rareKmers[bin]=0;
             // if we have gaps in the kmerBuf[bin], we need to memmove the blocks into place before sorting
-            fprintf(stderr,"binTally[%zi]: %u > %f\n",bin,binTally[bin],0.9*(float)binCapacity[bin]);
+//            fprintf(stderr,"binTally[%zi]: %u > %f\n",bin,binTally[bin],0.9*(float)binCapacity[bin]);
             if (1) { // stl sort
                 if( nwords == 1 ) sort((kmer1_t*)kmerBuf[bin], (kmer1_t*)(kmerBuf[bin] + nwords * binTally[bin]));
                 if( nwords == 2 ) sort((kmer2_t*)kmerBuf[bin], (kmer2_t*)(kmerBuf[bin] + nwords * binTally[bin]));
@@ -593,18 +598,18 @@ void Kmerizer::doUnique(const size_t from, const size_t to) {
             if (batches[bin] == 0) {
                 // sort/uniq -c the tally array
                 vector<uint32_t> df, df_count;
-                // bitHist(tally, df, df_count);
-                vecHist(tally, df, df_count);
-                fprintf(stderr,"bin %zi bitHist returned %zi distinct kmer frequencies out of %u distinct kmers\n",bin,df.size(),distinct);
+                bitHist(tally, df, df_count);
+                //vecHist(tally, df, df_count);
+                // fprintf(stderr,"bin %zi bitHist returned %zi distinct kmer frequencies out of %u distinct kmers\n",bin,df.size(),distinct);
                 uint32_t vacancies = lutCapacity[bin] - lutTally[bin];
-                fprintf(stderr,"vacancies = %u\n", vacancies);
+                // fprintf(stderr,"vacancies = %u\n", vacancies);
                 int cutidx = df.size()-1;
                 while (vacancies > df_count[cutidx] && cutidx>=0) {
                     vacancies -= df_count[cutidx];
                     cutidx--;
                 }
                 cutidx++;
-                fprintf(stderr,"vacancies %u, cutidx %u, df %u, df_count %u\n",vacancies, cutidx, df[cutidx], df_count[cutidx]);
+                // fprintf(stderr,"vacancies %u, cutidx %u, df %u, df_count %u\n",vacancies, cutidx, df[cutidx], df_count[cutidx]);
                 uint32_t distinct2=0;
                 for(int i=0;i < distinct; i++) {
                     if (tally[i] >= df[cutidx]) { // move this kmer to the lut
@@ -619,18 +624,27 @@ void Kmerizer::doUnique(const size_t from, const size_t to) {
                     }
                 }
                 tally.resize(distinct2);
-                fprintf(stderr,"after: lutTally[bin]: %u, distinct: %u, distinct2: %u\n",lutTally[bin],distinct, distinct2);
+                // fprintf(stderr,"after: lutTally[bin]: %u, distinct: %u, distinct2: %u\n",lutTally[bin],distinct, distinct2);
                 distinct = distinct2;
             }
-            fprintf(stderr,"uniqify[%zi] reduced from %u - %u = %u\n",bin,binTally[bin],distinct,binTally[bin] - distinct - 1);
+            // fprintf(stderr,"uniqify[%zi] reduced from %u - %u = %u\n",bin,binTally[bin],distinct,binTally[bin] - distinct - 1);
             binTally[bin] = distinct;
 
             if (binTally[bin] > 0) {
                 batches[bin]++;
                 // create a bitmap index for the tally vector
                 rangeIndex(tally, kmerFreq[bin], counts[bin]);
-                // build bit sliced index of the kmers
-                doWriteBatch(bin, bin+1);
+
+                FILE *fp;
+
+                // open output file for kmerBuf
+                char kmer_file[100];
+                sprintf(kmer_file,"%s/%zi-mers.%zi.%zi.raw",outdir,k,bin,batches[bin]);
+                fp = fopen(kmer_file, "wb");
+                fwrite(kmerBuf[bin],kmerSize,binTally[bin],fp);
+                fclose(fp);
+
+                doWriteBatch(bin,bin+1);
                 binTally[bin] = 0;
             }
         }
@@ -717,18 +731,10 @@ void Kmerizer::doWriteBatch(const size_t from, const size_t to) {
  //       fprintf(stderr,"doWriteBatch() binTally[%zi]: %u\n",bin,binTally[bin]);
         const size_t nbits = 8*kmerSize;
         BitVector* kmer_slices[nbits];
-        bitSlice(kmerBuf[bin],binTally[bin],kmer_slices,nbits);
+        // bitSlice(kmerBuf[bin],binTally[bin],kmer_slices,nbits);
         
         FILE *fp;
         if (0) {
-            // open output file for kmerBuf
-            char kmer_file[100];
-            sprintf(kmer_file,"%s/%zi-mers.%zi.%zi",outdir,k,bin,batches[bin]);
-            fp = fopen(kmer_file, "wb");
-            fwrite(kmerBuf[bin],kmerSize,binTally[bin],fp);
-            fclose(fp);
-        }
-        if (1) {
             // write the kmer_slices to a file
             char kmer_file[100];
             sprintf(kmer_file,"%s/%zi-mers.%zi.%zi",outdir,k,bin,batches[bin]);
@@ -757,6 +763,7 @@ void Kmerizer::doWriteBatch(const size_t from, const size_t to) {
         char counts_file[100];
         sprintf(counts_file,"%s/%zi-mers.%zi.%zi.idx",outdir,k,bin,batches[bin]);
         fp = fopen(counts_file, "wb");
+
         // first write the number of distinct values
         // then write the distinct values
         // for each distinct value, write out the BitVector (size,count,rle,words.size(),words)
@@ -1027,6 +1034,12 @@ void Kmerizer::vecHist(vector<uint32_t> &vec, vector<uint32_t> &values, vector<u
 //    fprintf(stderr," took %f seconds\n",elapsedTime);
 }
 
+void print_binary(uint64_t w) {
+    for (int b = 63; b >= 0; b--)
+        fprintf(stderr,"%d", w & (1ULL << b) ? 1 : 0);
+    fprintf(stderr,"\n");
+}
+
 void Kmerizer::bitHist(vector<uint32_t> &vec, vector<uint32_t> &values, vector<uint32_t> &frequency) {
     // fprintf(stderr,"bitHist()");
     // timeval t1, t2;
@@ -1038,19 +1051,17 @@ void Kmerizer::bitHist(vector<uint32_t> &vec, vector<uint32_t> &values, vector<u
     vector<uint32_t> overflow;
     vector<uint32_t>::iterator it;
     for (it = vec.begin(); it < vec.end(); ++it)
-        if (*it < 16384) // first 8 bits choose the word, last 6 bits choose the bit
-            mybits[*it >> 6] |= (1ULL << (63 - *it & 63));
+        if (*it < 16384UL) // first 8 bits choose the word, last 6 bits choose the bit
+            mybits[*it >> 6] |= (1ULL << (63 - (*it & 63UL)));
         else
             overflow.push_back(*it);
     // find the set bits
     // save the popCount for use later
     unsigned int totalpc[256];
-    for (size_t i=0; i<256; i++) {
+    for (unsigned int i=0; i<256; i++) {
         unsigned int pc = popCount(mybits[i]);
-//        if (pc>0) fprintf(stderr,"i: %zi, pc: %u\n",i,pc);
         for (unsigned int r=1; r<=pc; r++) {
             unsigned int b = selectBit(mybits[i], r);
- //           fprintf(stderr,"r: %u, b: %u, value: %u\n",r,b,(i << 6) | b);
             values.push_back((i << 6) | b);
         }
         if (i>0)
@@ -1058,25 +1069,24 @@ void Kmerizer::bitHist(vector<uint32_t> &vec, vector<uint32_t> &values, vector<u
         else
             totalpc[i] = pc;
     }
-    int smallCount = values.size();
+    unsigned int smallCount = values.size();
     if (smallCount != totalpc[255]) {
         fprintf(stderr,"total popCount (%u) doesn't match size of values vector (%zi)\n",totalpc[255],values.size());
     }
+//    fprintf(stderr,"smallCount: %i, overflow.size(): %zi\n",smallCount,overflow.size());
     // uniqify the overflow
     frequency.clear();
-    frequency.resize(values.size()+overflow.size());
+    frequency.resize(values.size());
     if (overflow.size() > 0) {
-        values.resize(frequency.size());
         sort(overflow.begin(),overflow.end());
-        int big = smallCount;
-        values[big] = overflow[0];
-        frequency[big]=1;
+        frequency.push_back(1);
+        values.push_back(overflow[0]);
         for(int i=1;i<overflow.size();i++) {
-            if (overflow[i] == values[big])
-                frequency[big]++;
+            if (overflow[i] == values.back())
+                frequency.back()++;
             else {
-                big++;
-                values[big] = overflow[i];
+                values.push_back(overflow[i]);
+                frequency.push_back(1);
             }
         }
     }
@@ -1092,7 +1102,13 @@ void Kmerizer::bitHist(vector<uint32_t> &vec, vector<uint32_t> &values, vector<u
             if(bin>0)
                 offset = totalpc[bin-1];
             // count set bits in mybits[bin] before this bit
-            offset += popCount(mybits[bin] & (0xFFFFFFFFFFFFFFFFULL << (64 - *it * 63)));
+            if (*it & 63UL) {
+                // print_binary(mybits[bin]);
+                // print_binary(0xFFFFFFFFFFFFFFFFULL << 64 - (*it & 63UL));
+                // print_binary(mybits[bin] & (0xFFFFFFFFFFFFFFFFULL << 64 - (*it & 63UL)));
+                offset += popCount(mybits[bin] & (0xFFFFFFFFFFFFFFFFULL << 64 - (*it & 63UL)));
+            }
+            // fprintf(stderr,"%u bin: %i, : %i\n",*it,bin,offset);
             frequency[offset]++;
         }
     }
