@@ -204,7 +204,7 @@ int kmercmp(const void *k1, const void *k2, size_t nwords) {
 
 // diy binary search
 int Kmerizer::searchLut(kword_t *kmer, size_t bin) {
-    if (batches[bin]==0) {
+    if (lutTally[bin]==1) {
         for(int i=0;i<nwords;i++)
             if (*(kmer+i) != 0)
                 return -1;
@@ -228,7 +228,7 @@ int Kmerizer::searchLut(kword_t *kmer, size_t bin) {
 
 void Kmerizer::save() {
     uniqify();
-//    mergeBatches();
+    mergeBatches();
 }
 
 void Kmerizer::load() {
@@ -778,6 +778,8 @@ void Kmerizer::doWriteBatch(const size_t from, const size_t to) {
             // write them
             fwrite(buf,1,bytes,fp);
             free(buf);
+            delete counts[bin][i]; // BitVector destructor
+
         }
         fclose(fp);
     }
@@ -816,19 +818,38 @@ void Kmerizer::doLoadIndex(const size_t from, const size_t to) {
 
 void Kmerizer::doMergeBatches(const size_t from, const size_t to) {
     for (size_t bin=from; bin<to; bin++) {
+        fprintf(stderr,"doMergeBatches() bin: %zi, batches: %u\n",bin,batches[bin]);
+        char fname[100];
+        sprintf(fname,"%s/%zi-mers.%zi",outdir,k,bin);
+        BitmapIndex *kmerSlices = new BitmapIndex(BINARY,64,nwords,fname);
+        sprintf(fname,"%s/%zi-mers.%zi.idx",outdir,k,bin);
+        BitmapIndex *kmerCounts = new BitmapIndex(RANGE,32,1,fname);
+        if (batches[bin] == 0) {
+            // all we have to deal with is the in-memory lookup table
+            for (int i=0;i<lutTally[bin];i++) {
+                kmerSlices->append(kmerLutK + i*nwords);
+                kmerCounts->append(kmerLutV + i);
+            }
+        }
+        else {
+            // need to merge in-memory lookup table with serialized batches
+            // open each file of raw kmers
+            // load the associated counts from the range encoded indexes
+            // try mmap-ing the raw kmers so we can treat them like arrays
+            // might be easier/faster than fread-ing into a buffer 
+        }
+    }
+}
+/*
         // read the counts and kmers for each batch
         vector<BitVector*>    batch_counts[batches[bin]];
         vector<uint32_t> batch_values[batches[bin]];
-        vector<BitVector*>    batch_slices[batches[bin]];
-        vector<uint32_t> batch_slice_cnts[batches[bin]];
         kword_t  kmers[batches[bin]*nwords]; // next kmer in each active batch
         uint32_t btally[batches[bin]]; // frequency of next kmer in each batch
         size_t   offset[batches[bin]]; // keep track of position in each batch
 
         for (size_t i=0;i<batches[bin];i++) {
             char fname[100];
-            sprintf(fname,"%s/%zi-mers.%zi.%zi",outdir,k,bin,i+1);
-            readBitmap(fname,batch_slice_cnts[i],batch_slices[i]);
             sprintf(fname,"%s/%zi-mers.%zi.%zi.idx",outdir,k,bin,i+1);
             readBitmap(fname,batch_values[i],batch_counts[i]);
         }
@@ -873,7 +894,7 @@ void Kmerizer::doMergeBatches(const size_t from, const size_t to) {
         }
         // replace min
         // iterate until there's nothing left to do
-        
+    
         while(todo>0) {
             size_t err = pos2kmer(offset[mindex],kmers + mindex*nwords, batch_slices[mindex]);
             if (err != 0) {
@@ -909,7 +930,7 @@ void Kmerizer::doMergeBatches(const size_t from, const size_t to) {
         for (size_t b=0; b<nbits; b++)
             if(boff[b]<n-1)
                 merged_slices[b]->appendFill(bbit.test(b),n-boff[b]);
-        
+    
         rangeIndex(tally,kmerFreq[bin],counts[bin]);
 
         // clean up the bitvector pointers
@@ -941,7 +962,7 @@ void Kmerizer::doMergeBatches(const size_t from, const size_t to) {
         }
 
         fclose(ofp);
-        
+    
         char counts_file[100];
         sprintf(counts_file,"%s/%zi-mers.%zi.idx",outdir,k,bin);
         ofp = fopen(counts_file, "wb");
@@ -959,7 +980,7 @@ void Kmerizer::doMergeBatches(const size_t from, const size_t to) {
             delete counts[bin][i];
         }
         fclose(ofp);
-        
+    
         // delete input files
         for (size_t i=0;i<batches[bin];i++) {
             sprintf(fname,"%s/%zi-mers.%zi.%zi",outdir,k,bin,i+1);
@@ -969,6 +990,7 @@ void Kmerizer::doMergeBatches(const size_t from, const size_t to) {
         }
     }
 }
+*/
 size_t Kmerizer::pos2kmer(size_t pos, kword_t *kmer, vector<BitVector*> &index) {
     if (pos >= index[0]->getSize()) return 1;
     size_t bpw = 8*sizeof(kword_t);

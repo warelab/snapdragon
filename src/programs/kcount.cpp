@@ -27,6 +27,22 @@ int main(int argc, char *argv[])
 		fprintf(stderr,"failed to allocate %llu bytes\n",cap_bytes);
 		exit(1);
 	}
+/*
+    uint32_t myints[] = {0,2,3,5,6,63,64,65,0,5,65};
+    vector<uint32_t> tally (myints, myints + sizeof(myints)/sizeof(uint32_t));
+    vector<uint32_t> df, df_count;
+    counter->bitHist(tally, df, df_count);
+    for(int i=0;i<df.size();i++) {
+        printf("%i\t%u\t%u\n",i,df[i],df_count[i]);
+    }
+    exit(1);
+*/
+
+
+
+
+
+
 	// process each seq from input
 	kseq_t *seq = kseq_init(fp);
 	int length;
