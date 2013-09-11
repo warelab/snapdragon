@@ -2,6 +2,7 @@ Makefile
 autom4te.cache
 stamp-h1
 config.*
+!config.sub
 !config.h.in
 *.la
 *.o
@@ -11,6 +12,7 @@ config.*
 /data
 .deps/
 .libs/
+libtool
 
 # Compiled executables
 /src/fastbit/fbsql_tab
