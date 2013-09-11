@@ -36,7 +36,7 @@ class Kmerizer {
 
     // capacity of each bin
     uint32_t              binCapacity[NBINS];
-    uint32_t              lutCapacity[NBINS];
+    uint32_t              totalCapacity[NBINS];
     
     // common kmers lookup table: implemented as a pair of arrays
     kword_t *             kmerLutK[NBINS]; // kmer
@@ -104,6 +104,7 @@ private:
     // reverse complement
     inline kword_t revcomp(const kword_t val) const;
 
+    inline int searchLut1(kword_t *kmer, size_t bin);
     int searchLut(kword_t *kmer, size_t bin);
 
     // count set bits in a kmer (usually XOR of 2 kmers)
@@ -298,6 +299,26 @@ inline kword_t Kmerizer::revcomp(const kword_t val) const {
         (rctable[(val>>40)&0xFFUL]<<16) |
         (rctable[(val>>48)&0xFFUL]<<8) |
         (rctable[(val>>56)&0xFFUL]);
+}
+
+
+// diy binary search
+inline int Kmerizer::searchLut1(kword_t *kmer, size_t bin) {
+    kword_t* A = kmerLutK[bin];
+    int imin = 0;
+    int imax = lutTally[bin];
+    while (imin < imax) {
+        int imid = (imin+imax)>>1;
+//        int cmp = kmercmp(A + nwords*imid, kmer, nwords);
+        kword_t *mid = A + nwords*imid;
+        if (*mid < *kmer)
+            imin = imid + 1;
+        else if (*mid > *kmer)
+            imax = imid;
+        else
+            return imid;
+    }
+    return -1;
 }
 
 

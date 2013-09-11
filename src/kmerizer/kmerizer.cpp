@@ -49,15 +49,15 @@ int Kmerizer::allocate(const size_t maximem) {
     memset(rareKmers, 0, sizeof(uint32_t) * NBINS);
     memset(lutTally, 0, sizeof(uint32_t) * NBINS);
     memset(batches, 0, sizeof(size_t) * NBINS);
-    uint32_t capacity = maximem / kmerSize / NBINS / 4;
+    uint32_t capacity = maximem / kmerSize / NBINS;
     for (size_t i = 0; i < NBINS; i++) {
-        binCapacity[i] = 3*capacity;
-        lutCapacity[i] = capacity;
+        binCapacity[i] = capacity - (capacity >> 2);
+        totalCapacity[i] = capacity;
         kmerBuf[i] = (kword_t *) calloc(binCapacity[i], kmerSize);
         if (kmerBuf[i] == NULL) return 1;
-        kmerLutK[i] = (kword_t *) calloc(lutCapacity[i], kmerSize);
+        kmerLutK[i] = (kword_t *) calloc(binCapacity[i], kmerSize);
         if (kmerLutK[i] == NULL) return 1;
-        kmerLutV[i] = (uint32_t *) calloc(lutCapacity[i], sizeof(uint32_t));
+        kmerLutV[i] = (uint32_t *) calloc(binCapacity[i], sizeof(uint32_t));
         if (kmerLutV[i] == NULL) return 1;
         
         lutTally[i] = 1; // heuristic: add the A* kmer in each bin
@@ -202,14 +202,7 @@ int kmercmp(const void *k1, const void *k2, size_t nwords) {
     return 0;
 }
 
-// diy binary search
 int Kmerizer::searchLut(kword_t *kmer, size_t bin) {
-    if (lutTally[bin]==1) {
-        for(int i=0;i<nwords;i++)
-            if (*(kmer+i) != 0)
-                return -1;
-        return 0;
-    }
     kword_t* A = kmerLutK[bin];
     int imin = 0;
     int imax = lutTally[bin];
@@ -225,6 +218,7 @@ int Kmerizer::searchLut(kword_t *kmer, size_t bin) {
     }
     return -1;
 }
+
 
 void Kmerizer::save() {
     uniqify();
@@ -359,26 +353,25 @@ void Kmerizer::serialize() {
 }
 
 void Kmerizer::uniqify() {
-    fprintf(stderr,"Kmerizer::uniqify()");
+//    fprintf(stderr,"Kmerizer::uniqify()");
     timeval t1, t2;
     double elapsedTime;
     gettimeofday(&t1, NULL);
     boost::thread_group tg;
-/*
-    for (size_t i = 0; i < NBINS; i += threadBins) {
-        size_t j = (i + threadBins > NBINS) ? NBINS : i + threadBins;
-        // fprintf(stderr,"i: %zi, threadBins: %zi, j: %zi\n",i,threadBins,j);
-        tg.create_thread(boost::bind(&Kmerizer::doUnique, this, i, j));
-    }
-*/
-    for(size_t i=0;i<NBINS;i++) {
-        tg.create_thread(boost::bind(&Kmerizer::doUnique, this, i,i+1));
-    }
+
+    // for (size_t i = 0; i < NBINS; i += threadBins) {
+    //     size_t j = (i + threadBins > NBINS) ? NBINS : i + threadBins;
+    //     // fprintf(stderr,"i: %zi, threadBins: %zi, j: %zi\n",i,threadBins,j);
+    //     tg.create_thread(boost::bind(&Kmerizer::doUnique, this, i, j));
+    // }
+    for(size_t i=0;i<NBINS;i++)
+        if (binTally[i] > 0) //0.5*(float)binCapacity[i])
+            tg.create_thread(boost::bind(&Kmerizer::doUnique, this, i,i+1));
     tg.join_all();
     state = QUERY;
     gettimeofday(&t2, NULL);
     elapsedTime = t2.tv_sec - t1.tv_sec + (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to ms
-    fprintf(stderr," took %f seconds\n",elapsedTime);
+ //   fprintf(stderr," took %f seconds\n",elapsedTime);
 }
 
 void Kmerizer::writeBatch() {
@@ -541,21 +534,70 @@ void Kmerizer::doUnique(const size_t from, const size_t to) {
         // filter the kmers that are in the LUT
         // shift kmers that are not in the LUT to the beginning of the buffer so we can sort them
         kword_t *kmer;
-        for (size_t i=rareKmers[bin]; i<binTally[bin]; i++) { // if it's not the first time doing this we don't have to check ALL kmers
-            kmer = kmerBuf[bin] + i*nwords;
-            int rc = searchLut(kmer,bin);
-            if (rc < 0) { // didn't find it
-                // maybe instead of copying them, just keep track of the gaps so they can be filled later
-                memcpy(kmerBuf[bin] + nwords*rareKmers[bin], kmer, kmerSize);
-                rareKmers[bin]++;
+        if (lutTally[bin]==1) { // first time, check if a kmer is 0
+            if (nwords==1) {
+                for (size_t i=rareKmers[bin]; i<binTally[bin]; i++) {
+                    kmer = kmerBuf[bin] + i;
+                    if (*kmer != 0) {
+                        memcpy(kmerBuf[bin] + nwords*rareKmers[bin], kmer, kmerSize);
+                        rareKmers[bin]++;
+                    }
+                    else
+                        kmerLutV[bin][0]++;
+                }
             }
-            else
-                kmerLutV[bin][rc]++;
+            else {
+                for (size_t i=rareKmers[bin]; i<binTally[bin]; i++) {
+                    kmer = kmerBuf[bin] + i*nwords;
+                    int rc=0;
+                    for(int i=0;i<nwords;i++) {
+                        if (*(kmer+i) != 0) {
+                            rc = -1;
+                            break;
+                        }
+                    }
+                    if (rc < 0) {
+                        memcpy(kmerBuf[bin] + nwords*rareKmers[bin], kmer, kmerSize);
+                        rareKmers[bin]++;
+                    }
+                    else
+                        kmerLutV[bin][rc]++;
+                }
+            }
+        }
+        else {
+            if (nwords==1) {
+                for (size_t i=rareKmers[bin]; i<binTally[bin]; i++) { // if it's not the first time doing this we don't have to check ALL kmers
+                    kmer = kmerBuf[bin] + i*nwords;
+                    int rc = searchLut1(kmer,bin);
+                    if (rc < 0) { // didn't find it
+                        // maybe instead of copying them, just keep track of the gaps so they can be filled later
+                        memcpy(kmerBuf[bin] + nwords*rareKmers[bin], kmer, kmerSize);
+                        rareKmers[bin]++;
+                    }
+                    else
+                        kmerLutV[bin][rc]++;
+                }
+            }
+            else {
+                for (size_t i=rareKmers[bin]; i<binTally[bin]; i++) { // if it's not the first time doing this we don't have to check ALL kmers
+                    kmer = kmerBuf[bin] + i*nwords;
+                    int rc = searchLut(kmer,bin);
+                    if (rc < 0) { // didn't find it
+                        // maybe instead of copying them, just keep track of the gaps so they can be filled later
+                        memcpy(kmerBuf[bin] + nwords*rareKmers[bin], kmer, kmerSize);
+                        rareKmers[bin]++;
+                    }
+                    else
+                        kmerLutV[bin][rc]++;
+                }
+                
+            }
         }
         binTally[bin] = rareKmers[bin];
         // need to decide whether to continue or return to filling the buffer
         // compare binTally[bin] to binCapacity[bin] - what ratio? 90%?
-        if (binTally[bin] >= 0.90*(float)binCapacity[bin]) {
+        if (binTally[bin] >= 0.9*(float)binCapacity[bin]) {
             rareKmers[bin]=0;
             // if we have gaps in the kmerBuf[bin], we need to memmove the blocks into place before sorting
 //            fprintf(stderr,"binTally[%zi]: %u > %f\n",bin,binTally[bin],0.9*(float)binCapacity[bin]);
@@ -579,74 +621,85 @@ void Kmerizer::doUnique(const size_t from, const size_t to) {
                 if( nwords == 7 ) qsort(kmerBuf[bin], binTally[bin], kmerSize, compare_kmers7);
                 if( nwords == 8 ) qsort(kmerBuf[bin], binTally[bin], kmerSize, compare_kmers8);
             }
-            // uniq -c
-            uint32_t distinct = 0;
-            vector<uint32_t> tally;
-            tally.push_back(1); // first kmer
-            for (size_t i=1;i<binTally[bin];i++) {
-                kword_t *ith = kmerBuf[bin] + i*nwords;
-                if(kmercmp(kmerBuf[bin] + distinct*nwords, ith, nwords) == 0)
-                    tally.back()++;
-                else {
-                    distinct++;
-                    tally.push_back(1);
-                    memcpy(kmerBuf[bin] + distinct*nwords, ith, kmerSize);
-                }
-            }
-            distinct++;
-            // after the first batch, add the most frequent kmers to the common kmer lookup table
+            // after the first batch, add the kmers to the common kmer lookup table
             if (lutTally[bin] == 1) {
-                // sort/uniq -c the tally array
-                vector<uint32_t> df, df_count;
-                bitHist(tally, df, df_count);
-                //vecHist(tally, df, df_count);
-                // fprintf(stderr,"bin %zi bitHist returned %zi distinct kmer frequencies out of %u distinct kmers\n",bin,df.size(),distinct);
-                uint32_t vacancies = lutCapacity[bin] - lutTally[bin];
-                // fprintf(stderr,"vacancies = %u\n", vacancies);
-                int cutidx = df.size()-1;
-                while (vacancies > df_count[cutidx] && cutidx>=0) {
-                    vacancies -= df_count[cutidx];
-                    cutidx--;
-                }
-                cutidx++;
-                // fprintf(stderr,"vacancies %u, cutidx %u, df %u, df_count %u\n",vacancies, cutidx, df[cutidx], df_count[cutidx]);
-                uint32_t distinct2=0;
-                for(int i=0;i < distinct; i++) {
-                    if (tally[i] >= df[cutidx]) { // move this kmer to the lut
-                        memcpy(kmerLutK[bin]+nwords*lutTally[bin],kmerBuf[bin] + i*nwords, kmerSize);
-                        kmerLutV[bin][lutTally[bin]] = tally[i];
-                        lutTally[bin]++;
-                    }
-                    else if (i != distinct2) { // move ith kmer to the distinct pos
-                        tally[distinct2] = tally[i];
-                        memcpy(kmerBuf[bin] + distinct2*nwords, kmerBuf[bin] + i*nwords, kmerSize);
-                        distinct2++;
+                // sampling phase is done, release constraint on binCapacity (for when there's lots of memory)
+                // uniq -c
+                // instead of selecting the most frequent kmers for the lookup table, just take them all
+                // the sampling phase will not use excessive RAM, (re)allocate when finished
+                uint32_t distinct = 0;
+                for (size_t i=1;i<binTally[bin];i++) {
+                    kword_t *ith = kmerBuf[bin] + i*nwords;
+                    if(kmercmp(kmerLutK[bin] + distinct*nwords, ith, nwords) == 0)
+                        kmerLutV[bin][distinct]++;
+                    else {
+                        distinct++;
+                        memcpy(kmerLutK[bin] + distinct*nwords, ith, kmerSize);
+                        kmerLutV[bin][distinct] = 1;
                     }
                 }
-                tally.resize(distinct2);
-                // fprintf(stderr,"after: lutTally[bin]: %u, distinct: %u, distinct2: %u\n",lutTally[bin],distinct, distinct2);
-                distinct = distinct2;
+                lutTally[bin] = distinct+1;
+                // resize the kmerLutK and kmerLutV arrays to hold lutTally[bin] items.
+                kmerLutK[bin] = (kword_t*) realloc(kmerLutK[bin], lutTally[bin]*kmerSize);
+                if (kmerLutK[bin] == NULL) {
+                    // error in realloc
+                    fprintf(stderr,"error in kmerLutK realloc");
+                    exit(3);
+                }
+                kmerLutV[bin] = (uint32_t*) realloc(kmerLutV[bin], lutTally[bin]*sizeof(uint32_t));
+                if (kmerLutV[bin] == NULL) {
+                    // error in realloc
+                    fprintf(stderr,"error in kmerLutV realloc");
+                    exit(3);
+                }
+                binCapacity[bin] = totalCapacity[bin] - lutTally[bin];
+                // reallocate kmerBuf[bin] to hold binCapacity[bin] kmers
+//                fprintf(stderr,"new binCapacity[%zi]=%u\n",bin,binCapacity[bin]);
+                kmerBuf[bin] = (kword_t*) realloc(kmerBuf[bin], binCapacity[bin] * kmerSize);
+                if (kmerBuf[bin] == NULL) {
+                    // error in realloc
+                    fprintf(stderr,"error in kmerBuf realloc");
+                    exit(3);
+                }
             }
-            // fprintf(stderr,"uniqify[%zi] reduced from %u - %u = %u\n",bin,binTally[bin],distinct,binTally[bin] - distinct - 1);
-            binTally[bin] = distinct;
+            else { // not in the sampling phase, so kmers are "rare". use 8 bits for the tally
+                // uniq -c
+                uint32_t distinct = 0;
+                vector<uint8_t> tally;
+                tally.push_back(1); // first kmer
+                for (size_t i=1;i<binTally[bin];i++) {
+                    kword_t *ith = kmerBuf[bin] + i*nwords;
+                    if(tally.back() < 255 && kmercmp(kmerBuf[bin] + distinct*nwords, ith, nwords) == 0)
+                        tally.back()++;
+                    else {
+                        distinct++;
+                        tally.push_back(1);
+                        memcpy(kmerBuf[bin] + distinct*nwords, ith, kmerSize);
+                    }
+                }
+                distinct++;
+                binTally[bin] = distinct;
 
-            if (binTally[bin] > 0) {
-                batches[bin]++;
-                // create a bitmap index for the tally vector
-                rangeIndex(tally, kmerFreq[bin], counts[bin]);
+                if (binTally[bin] > 0) { // its possible that all values went into the kmerLut
+                    batches[bin]++;
 
-                FILE *fp;
+                    FILE *fp;
 
-                // open output file for kmerBuf
-                char kmer_file[100];
-                sprintf(kmer_file,"%s/%zi-mers.%zi.%zi.raw",outdir,k,bin,batches[bin]);
-                fp = fopen(kmer_file, "wb");
-                fwrite(kmerBuf[bin],kmerSize,binTally[bin],fp);
-                fclose(fp);
-
-                doWriteBatch(bin,bin+1);
-                binTally[bin] = 0;
+                    // open output file for kmerBuf
+                    char kmer_file[100];
+                    sprintf(kmer_file,"%s/%zi-mers.%zi.%zi.raw",outdir,k,bin,batches[bin]);
+                    fp = fopen(kmer_file, "wb");
+                    fwrite(kmerBuf[bin],kmerSize,binTally[bin],fp);
+                    fclose(fp);
+                    // write the tally array
+                    char count_file[100];
+                    sprintf(count_file,"%s/%zi-mers.%zi.%zi.count",outdir,k,bin,batches[bin]);
+                    fp = fopen(count_file, "wb");
+                    fwrite(tally.data(),1,distinct,fp);
+                    fclose(fp);
+                }
             }
+            binTally[bin] = 0;
         }
     }
 }
@@ -818,26 +871,79 @@ void Kmerizer::doLoadIndex(const size_t from, const size_t to) {
 
 void Kmerizer::doMergeBatches(const size_t from, const size_t to) {
     for (size_t bin=from; bin<to; bin++) {
-        fprintf(stderr,"doMergeBatches() bin: %zi, batches: %u\n",bin,batches[bin]);
+        //fprintf(stderr,"doMergeBatches() bin: %zi, batches: %zi\n",bin,batches[bin]);
+        if (lutTally[bin] > 1 || kmerLutV[0]>0) {
+            
+            char kmer_file[100];
+            sprintf(kmer_file,"%s/%zi-mers.%zi.0.raw",outdir,k,bin);
+            FILE *fp;
+            fp = fopen(kmer_file, "wb");
+            fwrite(kmerLutK[bin],kmerSize,lutTally[bin],fp);
+            fclose(fp);
+            // write the tally array
+            char count_file[100];
+            sprintf(count_file,"%s/%zi-mers.%zi.0.count",outdir,k,bin);
+            fp = fopen(count_file, "wb");
+            fwrite(kmerLutV[bin],sizeof(uint32_t),lutTally[bin],fp);
+            fclose(fp);
+        }
+
+/*
         char fname[100];
+        // initialize the BitSlicedIndex for the common kmers in kmerLutK
         sprintf(fname,"%s/%zi-mers.%zi",outdir,k,bin);
-        BitmapIndex *kmerSlices = new BitmapIndex(BINARY,64,nwords,fname);
-        sprintf(fname,"%s/%zi-mers.%zi.idx",outdir,k,bin);
-        BitmapIndex *kmerCounts = new BitmapIndex(RANGE,32,1,fname);
+
+        BitSlicedIndex *mergedKmers = new BitSlicedIndex(nwords,fname);
+        
         if (batches[bin] == 0) {
-            // all we have to deal with is the in-memory lookup table
+            // only have to deal with the common kmers from kmerLutK
             for (int i=0;i<lutTally[bin];i++) {
-                kmerSlices->append(kmerLutK + i*nwords);
-                kmerCounts->append(kmerLutV + i);
+                mergedKmers->append(kmerLutK + i*nwords);
             }
+            // create a range encoded bitmap index for the common kmer counts in kmerLutV
+            sprintf(fname,"%s/%zi-mers.%zi.idx",outdir,k,bin);
+            RangeEncodedIndex *kmerCounts = new RangeEncodedIndex(kmerLutV,fname);
+            kmerCounts->saveIndex();
         }
         else {
             // need to merge in-memory lookup table with serialized batches
             // open each file of raw kmers
-            // load the associated counts from the range encoded indexes
-            // try mmap-ing the raw kmers so we can treat them like arrays
-            // might be easier/faster than fread-ing into a buffer 
+            // try mmap-ing so we can treat them like arrays
+            // the counts were serialized as an array of uint8_t
+            uint8_t *kmerCounts [batches[bin]];
+            kword_t *kmerValues [batches[bin]]; // mmap'ed so memory is managed by kernel
+            for (int i=0;i<batches[bin];i++) {
+                // load the counts from batch i
+                sprintf(fname,"%s/%zi-mers.%zi.%i.count",outdir,k,bin,i);
+                kmerCounts[i];
+
+                // mmap the raw kmers file from batch i
+                sprintf(fname,"%s/%zi-mers.%zi.%i.raw",outdir,k,bin,i);
+                kmerValues[i];
+            }
+            vector<uint32_t> mergedCounts;
+            // setup a heap with the min value from each batch
+            // initialize super fast direct hash table
+            // initialize the cutoff
+            while (heap not empty) {
+                // extract the min from the heap
+                // if < cutoff, take any other values from the corresponding batch below cutoff
+                // add each to the counting hash
+                // insert the next kmer into the heap
+                // once you hit a key that is too big, stop
+                // iterate over the set bits and output keys to mergedKmers and counts to mergedCounts
+                // zero the hash while processing
+                mergedKmers->append();
+                mergedCounts.push_back();
+            }
+
+            // create the range encoded index for the mergedCounts
+            sprintf(fname,"%s/%zi-mers.%zi.idx",outdir,k,bin);
+            RangeEncodedIndex *kmerCounts = new RangeEncodedIndex(mergedCounts,fname);
+            kmerCounts->saveIndex();
         }
+        mergedKmers->saveIndex();
+*/
     }
 }
 /*

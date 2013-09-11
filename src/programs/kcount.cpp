@@ -15,14 +15,14 @@ int main(int argc, char *argv[])
 	fp = gzopen(argv[1], "r");
 	size_t k = atoi(argv[2]);
 	size_t threads = atoi(argv[3]);
-	size_t cap_bytes = atoi(argv[4]);
+	size_t cap_bytes = atoll(argv[4]);
 	char* mode = argv[5];
 	char* outprefix = argv[6];
 	// create output directory if it doesn't exist
 	mkdir(outprefix,0755);
 
 	Kmerizer *counter = new Kmerizer(k, threads, outprefix, mode[0]);
-	int rc = counter->allocate(3000000000);
+	int rc = counter->allocate(cap_bytes);
 	if (rc != 0) {
 		fprintf(stderr,"failed to allocate %llu bytes\n",cap_bytes);
 		exit(1);
